@@ -25,7 +25,7 @@ int main() {
     assert(comm_sz <= MAX_NODES);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-    int N = 100000000;
+    int N = 1000000;
     int K = 2;
 
     // float data[N] = {3, 4, 2, 2, 4, 8, 7, 8, 9, 7};
@@ -179,8 +179,9 @@ void generateData(float* data_out, const size_t n, const int k) {
     const float variance = 100000;
     for (size_t i = 0; i < n; ++i) {
         // choose cluster
-        int cluster_i = rand() % k;
-        float norm_data = (float)rand() / RAND_MAX - 0.5;
-        data_out[i] = variance * norm_data + (range * cluster_i / k);
+        // int cluster_i = rand() % k;
+        // float norm_data = (float)rand() / RAND_MAX - 0.5;
+        // data_out[i] = variance * norm_data + (range * cluster_i / k);
+        data_out[i] = rand() % 10000;
     }
 }
