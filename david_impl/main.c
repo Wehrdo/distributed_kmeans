@@ -3,37 +3,70 @@
 #include <stdio.h>
 #include <math.h>
 #include <time.h>
+#include <string.h>
 #include <assert.h>
 
 #include <mpi.h>
 
-#define MAX_NODES 100
+#define MAX_NODES (100)
+#define DATA_RANGE (10000)
+#define STATIC_SEED (12)
 
-void kmeans(const float* data, const size_t n, const int k, float* clusters, int* cluster_counts);
-void generateData(float* data_out, const size_t n, const int k);
-int compareClusters(const void* clust1, const void* clust2);
-
+/* Datatypes */
 struct {
     float centroid;
     size_t n;
 } typedef Cluster_t;
 
-int main() {
+struct {
+    long N;
+    int k;
+    bool seed;
+    bool run;
+} typedef config_t;
+
+/* Function declarations */
+void kmeans(const float* data, const size_t n, const int k, float* clusters, int* cluster_counts);
+void generateData(float* data_out, const config_t config);
+int compareClusters(const void* clust1, const void* clust2);
+config_t getConfig(int argc, char* argv[]);
+
+int main(int argc, char* argv[]) {
     MPI_Init(NULL, NULL);
     int comm_sz, my_rank;
     MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
     assert(comm_sz <= MAX_NODES);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-    int N = 1000000;
-    int K = 2;
+    long N;
+    int k;
+    bool run;
+    bool rand_seed;
 
-    // float data[N] = {3, 4, 2, 2, 4, 8, 7, 8, 9, 7};
+    double start_time, end_time;
+
     float* orig_data;
     if (my_rank == 0) {
+        printf("P = %d\n", comm_sz);
+        config_t config = getConfig(argc, argv);
+        N = config.N; k = config.k; run = config.run; rand_seed = config.seed;
         orig_data = malloc(N * sizeof(float));
-        generateData(orig_data, N, K);
-        printf("Data generated\n");
+        if (!orig_data ) {
+            printf("Failed to allocate %ld MB of data\n", N * sizeof(float) / (1 << 20));
+            run = false;
+        }
+        generateData(orig_data, config);
+        start_time = MPI_Wtime();
+    }
+    MPI_Bcast(&N, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&k, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&run, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&rand_seed, 1, MPI_C_BOOL, 0, MPI_COMM_WORLD);
+
+    // Abort if not initialized correctly
+    if (!run) {
+        MPI_Finalize();
+        return 1;
     }
 
     // Scatter data
@@ -54,17 +87,17 @@ int main() {
 
 
     // cluster data
-    float* clusters = malloc(K * sizeof(float));
-    int* cluster_counts = malloc(K * sizeof(int));
+    float* clusters = malloc(k * sizeof(float));
+    int* cluster_counts = malloc(k * sizeof(int));
 
-    kmeans(data, send_counts[my_rank], K, clusters, cluster_counts);
+    kmeans(data, send_counts[my_rank], k, clusters, cluster_counts);
 
     // gather cluster data
-    int n_total_clusters = K * comm_sz;
+    int n_total_clusters = k * comm_sz;
     float* all_clusters = malloc(n_total_clusters * sizeof(float));
     int* all_cluster_counts = malloc(n_total_clusters * sizeof(int));
-    MPI_Gather(clusters, K, MPI_FLOAT, all_clusters, K, MPI_FLOAT, 0, MPI_COMM_WORLD);
-    MPI_Gather(cluster_counts, K, MPI_INT, all_cluster_counts, K, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Gather(clusters, k, MPI_FLOAT, all_clusters, k, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Gather(cluster_counts, k, MPI_INT, all_cluster_counts, k, MPI_INT, 0, MPI_COMM_WORLD);
 
     // Average clusters
     if (my_rank == 0) {
@@ -77,8 +110,8 @@ int main() {
         // sort clusters by centroid
         qsort(combined_clusters, n_total_clusters, sizeof(Cluster_t), compareClusters);
 
-        float* global_centroids = malloc(K * sizeof(float));
-        for (int i = 0; i < K; ++i) {
+        float* global_centroids = malloc(k * sizeof(float));
+        for (int i = 0; i < k; ++i) {
             double num_sum = 0;
             double denom_sum = 0;
             for (int j = 0; j < comm_sz; ++j) {
@@ -88,9 +121,13 @@ int main() {
             }
             global_centroids[i] = num_sum / denom_sum;
         }
-        for (int i = 0; i < K; ++i) {
+        end_time = MPI_Wtime();
+        printf("Time = %lf\n", end_time - start_time);
+
+        for (int i = 0; i < k; ++i) {
             printf("Cluster %d = %f\n", i, global_centroids[i]);
         }
+        printf("\n");
 
         free(combined_clusters); free(global_centroids);
     }
@@ -159,7 +196,6 @@ void kmeans(const float* data, const size_t n, const int k, float* clusters, int
         
         n_iters++;
     }
-    printf("%d iterations\n", n_iters);
 
     free(cluster_assns);
     free(centroid_sums);
@@ -173,15 +209,35 @@ int compareClusters(const void* clust1, const void* clust2) {
     else { return 0; }
 }
 
-void generateData(float* data_out, const size_t n, const int k) {
-    srand(time(NULL));
-    const float range = 1000000;
-    const float variance = 100000;
-    for (size_t i = 0; i < n; ++i) {
-        // choose cluster
-        // int cluster_i = rand() % k;
-        // float norm_data = (float)rand() / RAND_MAX - 0.5;
-        // data_out[i] = variance * norm_data + (range * cluster_i / k);
-        data_out[i] = rand() % 10000;
+void generateData(float* data_out, const config_t config) {
+    if (config.seed) {
+        srand(time(NULL));
     }
+    else {
+        srand(STATIC_SEED);
+    }
+    for (size_t i = 0; i < config.N; ++i) {
+        data_out[i] = rand() % DATA_RANGE;
+    }
+}
+
+config_t getConfig(int argc, char* argv[]) {
+    config_t config;
+    // get parameters
+    if (argc != 4 ||
+        (argc == 4 && strcmp("y", argv[3]) && strcmp("n", argv[3]))) {
+        printf("Call using kmeans <N> <k> <y|n>\n\
+                N: Number of points\n\
+                k: Number of clusters\n\
+                y|n: Yes/No of whether to use a random seed");
+        config.run = false;
+    }
+    else {
+        config.N = atol(argv[1]);
+        config.k = atoi(argv[2]);
+        config.seed = strcmp("y", argv[3]) == 0;
+        config.run = true;
+    }
+    printf("N=%ld\nk=%d\nseed=%d\n", config.N, config.k, config.seed);
+    return config;
 }
