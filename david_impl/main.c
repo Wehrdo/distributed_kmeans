@@ -129,8 +129,21 @@ int main(int argc, char* argv[]) {
         }
         printf("\n");
 
+        // // Tests for comparison of clusters between sequential and parallel version
+        // assert(k == 2);
+        // float cross_point = (global_centroids[0] + global_centroids[1]) / 2.;
+        // // count number in cluster 1 (number below cross point)
+        // size_t clust1_count = 0;
+        // for (size_t i = 0; i < N; ++i) {
+        //     if (orig_data[i] < cross_point) {
+        //         clust1_count += 1;
+        //     }
+        // }
+        // printf("Number in cluster 1: %ld\n", clust1_count);
+
         free(combined_clusters); free(global_centroids);
     }
+
 
     free(clusters); free(cluster_counts);
     free(all_clusters); free(all_cluster_counts);
@@ -152,7 +165,7 @@ void kmeans(const float* data, const size_t n, const int k, float* clusters, int
     srand(time(NULL));
     // initial cluster values
     for (size_t i = 0; i < k; ++i) {
-        clusters[i] = data[rand() % n];
+        clusters[i] = data[rand() % n]; 
     }
 
 
@@ -217,7 +230,8 @@ void generateData(float* data_out, const config_t config) {
         srand(STATIC_SEED);
     }
     for (size_t i = 0; i < config.N; ++i) {
-        data_out[i] = rand() % DATA_RANGE;
+        // data_out[i] = rand() % DATA_RANGE;
+        data_out[i] = ((double)DATA_RANGE / (double)RAND_MAX) * (double)rand();
     }
 }
 
